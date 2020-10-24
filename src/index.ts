@@ -179,6 +179,17 @@ async function main() {
         }
     });
 
+    app.get('/bomb', (req, res, next) => {
+        res.type("html");
+        res.write("<a href=\"/bomb/login\">Login</a><br>\r\n");
+        res.write("<h3>Bombs</h3>\r\n");
+
+        for (const labname in labs) {
+            res.write(`<a href="/bomb/download/${labname}">${labname}</a><br>\r\n`);
+        }
+        res.end();
+    })
+
     app.get('/bomb/download/:labname', async (req, res, next) => {
         try {
             let token = req.cookies.user;
