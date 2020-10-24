@@ -1,0 +1,223 @@
+import { execFile } from "child_process";
+import { access, unlink, readFile, rmdir } from "fs";
+import { resolve } from "path";
+import { cwd } from "process";
+import { SandboxParameter, SandboxResult, SandboxStatus, startSandbox } from "simple-sandbox";
+import { promisify } from "util";
+import { promises as fsPromises } from "fs";
+import path from "path";
+
+// TODO: calculate path in User class
+
+let promiseAccess = promisify(access);
+let promiseReadFile = promisify(readFile);
+let promiseRmdir = promisify(rmdir);
+let promiseUnlink = promisify(unlink);
+let promiseExecFile = promisify(execFile);
+
+interface SandboxJob {
+    sandboxParam: SandboxParameter;
+    resolve: (SandboxResult) => void;
+    reject: (error: any) => void;
+}
+
+let sandboxQueue = new class {
+    running: boolean;
+    jobs: SandboxJob[];
+    private onHaveJob?: () => void;
+
+    constructor() {
+        this.running = false;
+        this.jobs = [];
+        this.onHaveJob = undefined;
+
+        this.ensureRunning();
+    }
+
+    ensureRunning = async () => {
+
+        if (this.running)
+            return;
+
+        this.running = true;
+
+        while (true) {
+            if (this.jobs.length > 0) {
+                let nowJob = this.jobs.shift();
+                console.log(nowJob.sandboxParam);
+                try {
+                    let process = startSandbox(nowJob.sandboxParam);
+                    let result = await process.waitForStop();
+                    nowJob.resolve(result);
+                } catch (error) {
+                    nowJob.reject(error);
+                }
+            } else {
+                let now = new Promise<void>((resolve, reject) => {
+                    this.onHaveJob = () => { resolve(); };
+                });
+                await now;
+                this.onHaveJob = undefined;
+            }
+        }
+    }
+
+    push = (param: SandboxParameter): Promise<SandboxResult> => {
+        return new Promise<SandboxResult>((resolve, reject) => {
+            this.jobs.push({
+                sandboxParam: param,
+                resolve: resolve,
+                reject: reject
+            });
+
+            if (this.onHaveJob) {
+                this.onHaveJob();
+            }
+        });
+
+    }
+}
+
+export async function packStudentBomb(studentId: string): Promise<string> {
+    try {
+        await promiseAccess(`${global.bomblabConfig.bomblab_path}/bombs/bomb${studentId}/README`);
+        await promiseAccess(`${global.bomblabConfig.bomblab_path}/bombs/bomb${studentId}/bomb`);
+        await promiseAccess(`${global.bomblabConfig.bomblab_path}/bombs/bomb${studentId}/bomb.c`);
+    } catch (error) {
+        let result = await compileBinary(studentId);
+
+        if (result.result !== 'okay')
+            throw result;
+    }
+
+    let stdout, stderr;
+
+    await promiseAccess(`${global.bomblabConfig.bomblab_path}/bombs/bomb${studentId}/bomb${studentId}.tar`).catch(async () => {
+        let ret = await promiseExecFile('/bin/tar',
+            ['cvf', `bomb${studentId}.tar`, 'README', 'bomb', 'bomb.c'], {
+            cwd: `${global.bomblabConfig.bomblab_path}/bombs/bomb${studentId}/`,
+            timeout: 5000
+        }).catch((reason) => {
+            throw {
+                result: 'unknown',
+                reason: reason
+            };
+        });
+        stdout = ret.stdout;
+        stderr = ret.stderr;
+    });
+
+    await promiseAccess(`${global.bomblabConfig.bomblab_path}/bombs/bomb${studentId}/bomb${studentId}.tar`).catch(() => {
+        throw {
+            result: 'error',
+            stdout: stdout,
+            stderr: stderr
+        };
+    })
+
+    return `${global.bomblabConfig.bomblab_path}/bombs/bomb${studentId}/bomb${studentId}.tar`;
+}
+
+export async function compileBinary(studentId: string): Promise<{ result: "okay" | "error" | "unknown" }> {
+    let ret: { result: "okay" | "error" | "unknown" };
+    try {
+        let result = await sandboxQueue.push({
+            time: 5000,
+            memory: 256 * 1024 * 1024,
+            process: 32,
+            chroot: global.bomblabConfig.sandbox_root_path,
+            hostname: 'bomblab-sandbox',
+            mounts: [{
+                src: global.bomblabConfig.bomblab_path,
+                dst: global.bomblabConfig.bomblab_mount_path,
+                limit: 10 * 1024 * 1024
+            }],
+            redirectBeforeChroot: true,
+            mountProc: true,
+            executable: "/usr/bin/perl",
+            stdin: undefined,
+            stdout: `./sandbox-output/${studentId}.stdout`,
+            stderr: `./sandbox-output/${studentId}.stderr`,
+            user: 'nobody',
+            cgroup: 'bomblab',
+
+            parameters: [
+                "/usr/bin/perl",
+                "./makebomb.pl",
+                "-n",
+                "-l",
+                "ruclab",
+                "-i",
+                studentId,
+                "-b",
+                "./bombs",
+                "-s",
+                "./src",
+                "-u",
+                `${studentId}@ruc.edu.cn`,
+                "-v",
+                studentId
+            ],
+            environments: ["PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"],
+            workingDirectory: global.bomblabConfig.bomblab_mount_path,
+            stackSize: -1
+        });
+        let info = {
+            stdout: "",
+            stderr: "",
+            status: result.status,
+            code: result.code
+        };
+        info.stdout = await promisify(readFile)(`./sandbox-output/${studentId}.stdout`).then((value) => {
+            return value.toString();
+        }).catch(() => "");
+        info.stderr = await promisify(readFile)(`./sandbox-output/${studentId}.stderr`).then((value) => {
+            return value.toString();
+        }).catch(() => "");
+        ret = { result: info.status == SandboxStatus.OK && info.code == 0 ? "okay" : "error", ...info };
+    } catch (error) {
+        let info = { reason: error };
+        ret = { result: "unknown", ...info };
+    }
+
+    if (ret.result !== "okay") {
+        await promisify(rmdir)(`${global.bomblabConfig.bomblab_path}/bombs/bomb${studentId}`).catch(() => null);
+    }
+
+    return ret;
+}
+
+export async function runBomb(input: string, studentId: string): Promise<{ result: 'success' | 'error'; output: string }> {
+    try {
+        await fsPromises.writeFile(`./sandbox-output/${studentId}.stdin`, input);
+        let result = await sandboxQueue.push({
+            time: 5000,
+            memory: 256 * 1024 * 1024,
+            process: 32,
+            chroot: global.bomblabConfig.sandbox_root_path,
+            hostname: 'bomblab-sandbox',
+            mounts: [{
+                src: path.join(global.bomblabConfig.bomblab_path, "bombs", `bomb${studentId}`),
+                dst: global.bomblabConfig.bomblab_mount_path,
+                limit: 0
+            }],
+            redirectBeforeChroot: true,
+            mountProc: true,
+            executable: path.join(global.bomblabConfig.bomblab_mount_path, "bomb-quiet"),
+            stdin: `./sandbox-output/${studentId}.stdin`,
+            stdout: `./sandbox-output/${studentId}.stdout`,
+            stderr: `./sandbox-output/${studentId}.stderr`,
+            user: 'nobody',
+            cgroup: 'bomblab',
+
+            parameters: [path.join(global.bomblabConfig.bomblab_mount_path, "bomb-quiet")],
+            environments: ["PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"],
+            workingDirectory: global.bomblabConfig.bomblab_mount_path,
+            stackSize: -1
+        });
+
+        return { result: result.code == 0 ? 'success' : 'error', output: (await fsPromises.readFile(`./sandbox-output/${studentId}.stdout`)).toString() };
+    } catch (error) {
+        return { result: 'error', output: JSON.stringify(error) };
+    }
+}

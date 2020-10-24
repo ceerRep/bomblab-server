@@ -1,0 +1,60 @@
+lib-cov
+*.seed
+*.log
+*.csv
+*.dat
+*.out
+*.pid
+*.gz
+*.swp
+
+pids
+logs
+results
+tmp
+
+# Build
+public/css/main.css
+/build
+
+# Coverage reports
+coverage
+
+# API keys and secrets
+.env
+
+# Dependency directory
+node_modules
+bower_components
+
+# Editors
+.idea
+*.iml
+
+# OS metadata
+.DS_Store
+Thumbs.db
+
+# Ignore built ts files
+dist/**/*
+
+# ignore yarn.lock
+yarn.lock
+
+/bomblab.db
+/package-lock.json
+/configs/*.json
+!/configs/*-example.json
+
+/sandbox-output/*
+!/sandbox-output/.gitkeep
+
+/bomblab/bombs/*
+!/bomblab/bombs/.gitkeep
+/bomblab/src/bomb
+/bomblab/src/bomb-quiet
+/bomblab/src/bomb-solve
+/bomblab/src/solution.txt
+/bomblab/src/phases.c
+/bomblab/src/phases.s
+/bomblab/src/*.o

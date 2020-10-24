@@ -1,0 +1,299 @@
+import { createConnections } from "typeorm";
+import { User as syzojUser } from "./model-syzoj/user";
+import { BinaryCompileStatus, User as bomblabUser } from "./model-bomblab/user";
+import { Submission } from "./model-bomblab/submission";
+import "reflect-metadata";
+
+import { BomblabGlobalConfig } from "./GlobalConfig";
+import { compileBinary, packStudentBomb, runBomb } from "./bomblab";
+import { promises as fsPromises, readFileSync } from "fs";
+
+import express from "express";
+import cookieParser from "cookie-parser";
+import jwt from "jsonwebtoken";
+import request from "request";
+import { promisify } from "util";
+import { URLSearchParams } from "url";
+
+const promiseGet = promisify(request.get);
+const promisePost = promisify(request.post);
+
+global.bomblabConfig = JSON.parse(readFileSync('./config.json').toString()) as BomblabGlobalConfig;
+
+async function main() {
+    const [bomblab, syzoj] = await createConnections([{
+        name: "bomblab",
+        type: "sqlite",
+        database: './bomblab.db',
+        synchronize: true,
+        entities: [__dirname + "/model-bomblab/*{.js,.ts}"],
+        logging: true
+    },
+    {
+        name: "syzoj",
+        type: "mariadb",
+        cache: false,
+        synchronize: false,
+        host: global.bomblabConfig.syzoj_db_host,
+        port: global.bomblabConfig.syzoj_db_port,
+        username: global.bomblabConfig.syzoj_db_user,
+        password: global.bomblabConfig.syzoj_db_password,
+        database: global.bomblabConfig.syzoj_db_database,
+        entities: [__dirname + "/model-syzoj/*{.js,.ts}"],
+        logging: true
+    }]);
+
+    let bomblabUserRepository = bomblab.getRepository(bomblabUser);
+    let bomblabSubmissionRespository = bomblab.getRepository(Submission);
+
+    const app = express()
+    app.use(cookieParser());
+
+    app.get('/bomb/login', (req, res) => {
+        res.redirect('https://v.ruc.edu.cn/oauth2/authorize?' + (new URLSearchParams({
+            response_type: 'code',
+            scope: 'userinfo profile',
+            state: 'yourstate',
+            client_id: global.bomblabConfig.vruc_client_id,
+            redirect_uri: global.bomblabConfig.server_url + "/bomb/callback/oauth"
+        })).toString());
+    });
+
+    app.get('/bomb/callback/oauth', async (req, res, next) => {
+        try {
+            let token = JSON.parse((await promisePost({
+                url: "https://v.ruc.edu.cn/oauth2/token",
+                form: {
+                    client_id: global.bomblabConfig.vruc_client_id,
+                    client_secret: global.bomblabConfig.vruc_client_secret,
+                    grant_type: 'authorization_code',
+                    code: req.query.code as string
+                }
+            })).body).access_token;
+
+            if (!token)
+                throw "Canceled";
+
+            let profile = JSON.parse((await promiseGet({
+                url: "https://v.ruc.edu.cn/apis/oauth2/v1/profile",
+                auth: {
+                    'bearer': token
+                }
+            })).body) as {
+                name: string;
+                profiles: {
+                    departmentname: string;
+                    stno: string;
+                }[];
+
+            };
+
+            let identity = profile.profiles.pop();
+
+            res.cookie('user', jwt.sign(identity.stno, global.bomblabConfig.jwt_secret));
+            res.redirect('/bomb');
+        } catch (error) {
+            next(error);
+        }
+    });
+
+    app.get('/bomb/submit', async (req, res) => {
+        try {
+            let params = req.query as {
+                userid: string;
+                userpwd: string;
+                lab: string;
+                result: string;
+                submit: string;
+            }
+
+            let [bomb_id, defused, num_input_strings, ...last_input_string_splited] = params.result.split(':');
+            let last_input_string = last_input_string_splited.join(':');
+
+            let realPwd = (await fsPromises.readFile(`${global.bomblabConfig.bomblab_path}/bombs/bomb${bomb_id}/PASSWORD`)).toString().trim();
+
+            if (realPwd != params.userpwd)
+                throw "Wrong userpwd";
+
+            let judge = (await bomblabSubmissionRespository.find({
+                studentId: params.userid,
+                labname: params.lab,
+                stage: parseInt(num_input_strings),
+                succeed: true
+            })).length == 0;
+
+            let submission = new Submission();
+            submission.studentId = params.userid;
+            submission.submitTime = new Date();
+            submission.succeed = defused === "defused";
+            submission.stage = parseInt(num_input_strings);
+            submission.info = "";
+            submission.input = last_input_string;
+            submission.labname = params.lab;
+            submission.rawSubmission = JSON.stringify(params);
+
+            await bomblabSubmissionRespository.save(submission);
+
+            res.send("OK");
+
+            if (submission.succeed && judge) {
+                // Validate
+
+                let searchResult = (await bomblab.query("select stage, input from submission inner join (select studentId, MAX(submitTime) as time from submission where studentId = ? and labname == ? and succeed = ? group by stage) subquery on submission.studentId = subquery.studentId and submission.submitTime = subquery.time;", [params.userid, params.lab, true])) as {
+                    stage: number;
+                    input: string;
+                }[];
+
+                let inputs = (await fsPromises.readFile(`${global.bomblabConfig.bomblab_path}/bombs/bomb${bomb_id}/solution.txt`)).toString().split('\n');
+
+                for (const { stage, input } of searchResult) {
+                    inputs[stage - 1] = input;
+                }
+
+                let input = inputs.join('\n');
+
+                let bombResult = await runBomb(input, submission.studentId);
+
+                if (bombResult.result === "error") {
+                    submission.succeed = false;
+                }
+
+                submission.info = bombResult.output;
+
+                await bomblabSubmissionRespository.save(submission);
+            }
+        }
+        catch (error) {
+            res.send(error);
+        }
+    });
+
+    app.get('/bomb', async (req, res, next) => {
+        try {
+            let token = req.cookies.user;
+            if (!token)
+                throw "Unauthed";
+            try {
+                jwt.verify(token, global.bomblabConfig.jwt_secret);
+            }
+            catch (error) {
+                res.clearCookie("user");
+                throw "Unauthed";
+            }
+            let studentId = jwt.decode(token) as string;
+
+            let userList = await bomblabUserRepository.find({ studentId: studentId });
+            let user: bomblabUser;
+
+            if (userList.length == 0) {
+                user = new bomblabUser();
+                user.studentId = studentId;
+                user.binaryCompileStatus = BinaryCompileStatus.none;
+                user.compilerInfo = "";
+                await bomblabUserRepository.save(user);
+            } else {
+                user = userList[0];
+            }
+
+            if (user.binaryCompileStatus == BinaryCompileStatus.none) {
+                user.binaryCompileStatus = BinaryCompileStatus.compiling;
+                await bomblabUserRepository.save(user);
+                packStudentBomb(studentId).then(async () => {
+                    user.binaryCompileStatus = BinaryCompileStatus.compiled;
+                    user.compilerInfo = "";
+                    await bomblabUserRepository.save(user);
+                }).catch(async (error) => {
+                    user.binaryCompileStatus = BinaryCompileStatus.none;
+                    user.compilerInfo = JSON.stringify(error);
+                    await bomblabUserRepository.save(user);
+                });
+                res.send(`Start compiling. <br/> Last compile status (if exists): ${user.compilerInfo}`);
+                return;
+            }
+            else if (user.binaryCompileStatus == BinaryCompileStatus.compiling) {
+                res.send(`Still compiling. <br/> Last compile status (if exists): ${user.compilerInfo}`);
+                return;
+            }
+
+            if (req.query.download) {
+                let bombPath = await packStudentBomb(studentId);
+                console.log(studentId, bombPath);
+
+                res.sendFile(bombPath,
+                    { root: '.' },
+                    function (err) {
+                        if (err) {
+                            next(err)
+                        } else {
+                            console.log('Sent:', bombPath)
+                        }
+                    });
+            }
+            else {
+                res.send("<html><head></head><body>Start downloading<script>window.location.href='/bomb?download=1';</script></body></html>");
+            }
+        }
+        catch (error) {
+            if (error === "Unauthed")
+                res.redirect("/bomb/login");
+            else
+                res.send(error);
+        }
+    });
+
+    app.get('/bomb/stats', async (req, res, next) => {
+        try {
+            let boomResult = await bomblab.createQueryBuilder().select(["user.studentId AS studentId", "boomQuery.boom AS stage", "IFNULL(boomQuery.boom, 0) AS boom"])
+                .from(bomblabUser, "user")
+                .innerJoin(
+                    subQueryBuilder => subQueryBuilder.select(["studentId", "stage", "COUNT(*) AS boom"])
+                        .from(Submission, "submission")
+                        .where("succeed = 0")
+                        .groupBy("studentId, stage"),
+                    "boomQuery",
+                    "user.studentId = boomQuery.studentId"
+                ).execute() as {
+                    studentId: string;
+                    stage: number;
+                    boom: number;
+                }[];
+            let scoreResult = await bomblab.createQueryBuilder().select(["user.studentId AS studentId", "IFNULL(scoreQuery.score, 0) AS score"])
+                .from(bomblabUser, "user")
+                .leftJoin(
+                    subQueryBuilder => subQueryBuilder.select(["studentId", "COUNT(DISTINCT stage) AS score"])
+                        .from(Submission, "submission")
+                        .where("succeed = 1")
+                        .groupBy("studentId"),
+                    "scoreQuery",
+                    "user.studentId = scoreQuery.studentId"
+                ).execute() as {
+                    studentId: string;
+                    score: number;
+                }[];
+            let result = scoreResult.map((r) => { return { booms: [0, 0, 0, 0, 0, 0, 0], ...r }; });
+            for (let r of boomResult) {
+                let student = result.find(s => s.studentId == r.studentId);
+                if (student)
+                    student.booms[r.stage] = r.boom
+            }
+            result.sort((a, b) => {
+                if (a.score != b.score)
+                    return b.score - a.score;
+                return a.booms.reduce((a, b) => a + b, 0) - b.booms.reduce((a, b) => a + b, 0);
+            });
+            res.json(result);
+        } catch (error) {
+            next(error);
+        }
+    });
+
+    app.listen(global.bomblabConfig.server_listen_port, '0.0.0.0', () => {
+        console.log(`Example app listening at http://0.0.0.0:${global.bomblabConfig.server_listen_port}`)
+    })
+
+    // let userRository = connections[1].getRepository(User);
+    // let user1 = await userRository.find({ id: 1 });
+    // console.log(user1);
+}
+
+main();

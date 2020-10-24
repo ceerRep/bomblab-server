@@ -1,0 +1,15 @@
+{
+    "syzoj_db_host": "SYZOJ_DATABASE_IP",
+    "syzoj_db_port": 3306,
+    "syzoj_db_user": "syzoj",
+    "syzoj_db_password": "SYZOJ_DATABASE_PASSWORD",
+    "syzoj_db_database": "syzoj",
+    "sandbox_root_path": "/opt/archroot/",
+    "bomblab_path": "./bomblab/",
+    "bomblab_mount_path": "/opt/bomblab/",
+    "server_listen_port": 11454,
+    "jwt_secret": "JWT_SECRET",
+    "vruc_client_id": "VRUC_CLIENT_ID",
+    "vruc_client_secret": "VRUC_CLIENT_SECRET",
+    "server_url": "SERVER_URL"
+}
