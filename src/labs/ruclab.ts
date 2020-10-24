@@ -190,7 +190,7 @@ export default class BombLab extends BombLabBase {
                 result: result.code == 0 ? 'accept' : 'error',
                 info: JSON.stringify({
                     stdout: (await fsPromises.readFile(`./sandbox-output/${submission.userid}.stdout`).catch(() => "")).toString(),
-                    stderr: (await fsPromises.readFile(`./sandbox-output/${submission.userid}.stdout`).catch(() => "")).toString()
+                    stderr: (await fsPromises.readFile(`./sandbox-output/${submission.userid}.stderr`).catch(() => "")).toString()
                 })
             };
         } catch (error) {
