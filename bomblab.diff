@@ -1,0 +1,142 @@
+diff -ru bomblab/Bomblab.pm bomblab-server-ts/bomblab/Bomblab.pm
+--- bomblab/Bomblab.pm	2016-01-13 05:35:28.000000000 +0800
++++ bomblab-server-ts/bomblab/Bomblab.pm	2020-10-22 01:21:36.970000000 +0800
+@@ -22,7 +22,7 @@
+ # tail recursion with iteration. We use the server's default word size
+ # when compiling bombs, but you can control this here explicitly by 
+ # adding -m32 or -m64 to CFLAGS. 
+-$CFLAGS = "-Wall -O1";
++$CFLAGS = "-w -O1";
+ 
+ ####
+ # The remaining options in Section 1 pertain to notifying bombs only.
+@@ -33,12 +33,12 @@
+ # of the lab. Results from bombs from previous instances of the
+ # course, which have different Lab IDs, will be ignored.  Make sure
+ # you change this each term. No spaces in the LabID.
+-$LABID = "f12";
++$LABID = "rucics";
+ 
+ # What is the name of the host that the bomblab servers and daemons
+ # are running on? Note that you don't need root access to run the
+ # bomblab.  Any Linux desktop will do.
+-$SERVER_NAME = "changeme.ics.cs.cmu.edu";
++$SERVER_NAME = "127.0.0.1";
+ 
+ # What is the penalty for exploding a notifying bomb? At CMU, we impose
+ # a penalty of 0.5 points per explosion.
+@@ -63,8 +63,8 @@
+ # change any of these. The only exception would be the unlikely
+ # event that there is a port conflict on your machine. Because we're 
+ # not running as root, this value must be greater than 1024.
+-$REQUESTD_PORT = 15213;  # Request server's port (where browsers point)
+-$RESULTD_PORT = 15214;   # Result server's port (where bombs send results)
++$REQUESTD_PORT = 11454;  # Request server's port (where browsers point)
++$RESULTD_PORT = 11454;   # Result server's port (where bombs send results)
+ 
+ #####
+ # Section 2: Optional Configuration Variables (LAB DEVELOPER)
+@@ -302,4 +302,3 @@
+ # Always end a module with a 1 so that it returns TRUE
+ #
+ 1;
+-
+diff -ru bomblab/src/Makefile bomblab-server-ts/bomblab/src/Makefile
+--- bomblab/src/Makefile	2016-01-13 04:31:19.000000000 +0800
++++ bomblab-server-ts/bomblab/src/Makefile	2020-10-22 01:20:43.960000000 +0800
+@@ -30,8 +30,8 @@
+ #
+ # Default result server name and port (not needed for non-notifying bombs)
+ # 
+-SERVERNAME = changeme.edu
+-SERVERPORT = 15214
++SERVERNAME = 127.0.0.1
++SERVERPORT = 11454
+ 
+ #
+ # If -DNOTIFY, then send an autoresult to the server
+@@ -98,43 +98,43 @@
+ 
+ # Build the bomb
+ bomb: bomb.o phases.o support.o driverlib.o 
+-	$(CC) $(CFLAGS) -o bomb bomb.o phases.o support.o driverlib.o
++	@$(CC) $(CFLAGS) -o bomb bomb.o phases.o support.o driverlib.o
+ 
+ driverlib.o: driverlib.c driverlib.h
+-	$(CC) $(CFLAGS) -DSERVER_NAME=\"$(SERVERNAME)\" -DSERVER_PORT=$(SERVERPORT) -DLABID=\"$(LABID)\" -c driverlib.c
++	@$(CC) $(CFLAGS) -DSERVER_NAME=\"$(SERVERNAME)\" -DSERVER_PORT=$(SERVERPORT) -DLABID=\"$(LABID)\" -c driverlib.c
+ 
+ bomb.o: bomb.c support.h phases.h
+-	$(CC) $(CFLAGS) -c -ggdb bomb.c
++	@$(CC) $(CFLAGS) -c -ggdb bomb.c
+ 
+ phases.o: phases.c phases.h
+-	$(CC) $(CFLAGS) -DPROBLEM -c phases.c
++	@$(CC) $(CFLAGS) -DPROBLEM -c phases.c
+ 
+ # Rule that makebomb.pl uses to build a quiet (non-notifying)
+ # version of the current bomb. Makebomb.pl sets the appropriate 
+ # environment variables. 
+ bomb-quiet: bomb.o support.o phases.o 
+-	$(CC) $(CFLAGS) -o bomb-quiet bomb.o phases.o support.o 
++	@$(CC) $(CFLAGS) -o bomb-quiet bomb.o phases.o support.o 
+ 
+ # This bomb prints its solution to the stdout
+ bomb-solve: bomb-solve.o support.o phases-solve.o driverlib.o
+-	$(CC) $(CFLAGS) -o bomb-solve bomb-solve.o phases-solve.o support.o driverlib.o
++	@$(CC) $(CFLAGS) -o bomb-solve bomb-solve.o phases-solve.o support.o driverlib.o
+ 
+ bomb-solve.o: bomb-solve.c support.h phases.h 
+-	$(CC) $(CFLAGS) -c bomb-solve.c 
++	@$(CC) $(CFLAGS) -c bomb-solve.c 
+ 
+ phases-solve.o: phases.c phases.h
+-	$(CC) $(CFLAGS) -DSOLUTION -c -o phases-solve.o phases.c
++	@$(CC) $(CFLAGS) -DSOLUTION -c -o phases-solve.o phases.c
+ 
+ # This file provides various support routines for the bomb
+ # BOMBFLAGS is either "-DNOTIFY" (compile with notification enabled) 
+ # or "-DNONOTIFY" (compile with notification disabled)
+ support.o: support.c support.h config.h
+-	$(CC) $(BOMBFLAGS) $(CFLAGS) -c support.c
++	@$(CC) $(BOMBFLAGS) $(CFLAGS) -c support.c
+ 
+ 
+ # Generate a phases.c file
+ phases.c: phases/*.c support.h
+-	./makephases.pl $(NOTIFYFLAG) $(BOMBPHASES) -d phases -i $(BOMBID) -u $(USERID) -w $(USERPWD) > phases.c
++	@./makephases.pl $(NOTIFYFLAG) $(BOMBPHASES) -d phases -i $(BOMBID) -u $(USERID) -w $(USERPWD) > phases.c
+ 
+ # Use this when you want to recompile with existing phases.c
+ clean:
+@@ -143,6 +143,3 @@
+ # Use this when you want to create a new phases.c file
+ cleanall:
+ 	-rm -f *.o phases.c phases.s bomb bomb-quiet bomb-solve solution.txt *~
+-
+-
+-
+diff -ru bomblab/src/driverlib.c bomblab-server-ts/bomblab/src/driverlib.c
+--- bomblab/src/driverlib.c	2016-01-13 04:31:19.000000000 +0800
++++ bomblab-server-ts/bomblab/src/driverlib.c	2020-10-22 05:19:26.850000000 +0800
+@@ -248,11 +248,19 @@
+     }
+ 
+     /* Construct the HTTP request */
+-    sprintf(buf, "GET /%s/submitr.pl/?userid=%s&userpwd=%s&lab=%s&result=%s&submit=submit HTTP/1.0\r\n\r\n", course, userid, user_pwd, lab, enc_result);
++    sprintf(buf, "GET /bomb/submit?userid=%s&userpwd=%s&lab=%s&result=%s&submit=submit HTTP/1.0\r\n", userid, user_pwd, lab, enc_result);
+ 
+     /* Send the request to the server */
+     if (rio_writen(clientfd, buf, strlen(buf)) < 0) {
+ 		strcpy(status_msg, "Error: Client unable to write to the server");
++		close(clientfd);
++		return -1;
++    }
++
++    sprintf(buf, "Host: %s\r\n\r\n", hostname);
++    /* Send the request to the server */
++    if (rio_writen(clientfd, buf, strlen(buf)) < 0) {
++		strcpy(status_msg, "Error: Client unable to write to the server");
+ 		close(clientfd);
+ 		return -1;
+     }
