@@ -49,12 +49,4 @@ yarn.lock
 /sandbox-output/*
 !/sandbox-output/.gitkeep
 
-/bomblab/bombs/*
-!/bomblab/bombs/.gitkeep
-/bomblab/src/bomb
-/bomblab/src/bomb-quiet
-/bomblab/src/bomb-solve
-/bomblab/src/solution.txt
-/bomblab/src/phases.c
-/bomblab/src/phases.s
-/bomblab/src/*.o
+/bomblab/*
