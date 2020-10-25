@@ -131,8 +131,6 @@ async function main() {
             submission.labname = bombSubmission.lab;
             submission.rawSubmission = JSON.stringify(bombSubmission);
 
-            await bomblabSubmissionRespository.save(submission);
-
             // Make bomb happy
             res.send("OK");
 
@@ -142,6 +140,8 @@ async function main() {
                 stage: parsedSubmission.stage,
                 succeed: true
             }));
+
+            await bomblabSubmissionRespository.save(submission);
 
             if (judge) {
                 // Validate
