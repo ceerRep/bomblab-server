@@ -19,7 +19,7 @@
 </head>
 
 <body>
-    <h1 class="ui center aligned header 卷" style="padding-top: 30px; padding-bottom: 15px; ">
+    <h1 class="ui center aligned header" style="padding-top: 30px; padding-bottom: 15px; ">
         Bomblab&nbsp;Scoreboard
     </h1>
     <div class="ui center aligned grid">
@@ -28,7 +28,7 @@
                 <thead>
                     <tr>
                         <% let stage_passed = stages.map(_=>0); %>
-                        <th class="sorted descending">Name</th>
+                        <th>Name</th>
                         <% for (let stage of stages) { %>
                         <th><%= stage.labname %>.<%= stage.stagename %></th>
                         <% } %>
@@ -59,7 +59,7 @@
                     <tr>
                         <th><%= students.length %> students</th>
                         <% for (let count of stage_passed) { %>
-                            <th> <%= count %> passed</th>
+                        <th> <%= count %> passed</th>
                         <% } %>
                         <th></th>
                         <th></th>
@@ -121,6 +121,8 @@
 
                     self.$table.trigger('tablesort:start', [self]);
                     self.log("Sorting by " + this.index + ' ' + this.direction);
+
+                    location.hash = encodeURI(JSON.stringify({ index: th.index(), direction: direction }));
 
                     // Try to force a browser redraw
                     self.$table.css("display");
@@ -204,7 +206,20 @@
                 return parseInt(a) - parseInt(b);
             }
         })
-        setTimeout(()=>window.location.reload(), 60 * 1000);
+
+        try {
+            var hash = JSON.parse(decodeURI(location.hash).substr(1));
+            console.log($('thead').children(0).children(hash.index));
+            $('thead').children().children().eq(hash.index).addClass('sorted ' + (hash.direction == 1 ? 'ascending' : 'descending'));
+        } catch (error) {
+            console.log(error);
+        }
+
+        $('.ascending').click();
+        $('.descending').click();
+        $('.descending').click();
+
+        setTimeout(() => window.location.reload(), 60 * 1000);
     </script>
 </body>
 
