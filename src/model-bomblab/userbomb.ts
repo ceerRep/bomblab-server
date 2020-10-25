@@ -1,9 +1,9 @@
 import { Index, Entity, PrimaryColumn, Column } from "typeorm";
 
 export enum BinaryCompileStatus {
-    "none",
-    "compiling",
-    "compiled"
+    none = 'none',
+    compiling = 'compiling',
+    compiled = 'compiled'
 }
 
 @Entity()

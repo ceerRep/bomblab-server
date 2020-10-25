@@ -59,8 +59,82 @@ async function main() {
     let bomblabUserBombRespository = bomblab.getRepository(UserBomb);
     let bomblabSubmissionRespository = bomblab.getRepository(Submission);
 
+    let getBombStats = async () => {
+        let users = (await bomblabUserBombRespository.createQueryBuilder("user")
+            .select("studentId")
+            .distinct(true)
+            .execute() as { studentId: string }[]).map(x => x.studentId);
+        let userBoomCount = Object.fromEntries((await bomblabSubmissionRespository.createQueryBuilder("submission")
+            .select(["studentId", "labname", "stage", "COUNT(*) AS boomcount"])
+            .where("succeed = 0")
+            .groupBy("studentId, labname, stage").execute() as {
+                studentId: string;
+                labname: string;
+                stage: number;
+                boomcount: number;
+            }[]).map(result => [[result.studentId, result.labname, result.stage].toString(), result]));
+        let userPassedStage = Object.fromEntries((await bomblabSubmissionRespository.createQueryBuilder('submission')
+            .select(["studentId", "labname", "stage"])
+            .where("succeed = 1")
+            .groupBy("studentId, labname, stage").execute() as {
+                studentId: string;
+                labname: string;
+                stage: number;
+            }[]).map(result => [[result.studentId, result.labname, result.stage].toString(), result]))
+        let userScore = Object.fromEntries((await bomblabSubmissionRespository.createQueryBuilder("submission").select(["studentId", "COUNT(DISTINCT stage) AS score"])
+            .where("succeed = 1")
+            .groupBy("studentId").execute() as {
+                studentId: string;
+                score: number;
+            }[]).map(result => [result.studentId, result]));
+        let result: {
+            stages: { labname: string; stagename: string; }[];
+            students: {
+                studentId: string;
+                stages: { labname: string; stagename: string; booms: number; passed: boolean; }[];
+                score: number;
+            }[]
+        } = { stages: undefined, students: undefined };
+        let stages: { labname: string; id: string; stagename: string; }[] = [];
+        for (const labname in labs) {
+            const lab = labs[labname];
+            for (const id in lab.stageInfo) {
+                stages.push({ labname: labname, id: id, stagename: lab.stageInfo[id].name });
+            }
+        }
+        result.stages = stages.map(stage => { return { labname: stage.labname, stagename: stage.stagename } });
+        result.students = users.map(username => {
+            let ret = {
+                studentId: username,
+                stages: [],
+                score: username in userScore ? userScore[username].score : 0
+            };
+
+            for (let stage of stages) {
+                let { labname, id, stagename } = stage;
+                let tmp = {
+                    labname: labname,
+                    stagename: stagename,
+                    booms: 0,
+                    passed: false
+                }
+                if ([username, labname, id].toString() in userBoomCount)
+                    tmp.booms = userBoomCount[[username, labname, id].toString()].boomcount;
+
+                if ([username, labname, id].toString() in userPassedStage)
+                    tmp.passed = true;
+                ret.stages.push(tmp);
+            }
+
+            return ret;
+        })
+        return result;
+    }
+
     const app = express()
     app.use(cookieParser());
+    app.set('view engine', 'ejs');
+    app.set('views', './src/views')
 
     app.get('/bomb/login', (req, res) => {
         res.redirect('https://v.ruc.edu.cn/oauth2/authorize?' + (new URLSearchParams({
@@ -179,15 +253,28 @@ async function main() {
         }
     });
 
-    app.get('/bomb', (req, res, next) => {
-        res.type("html");
-        res.write("<a href=\"/bomb/login\">Login</a><br>\r\n");
-        res.write("<h3>Bombs</h3>\r\n");
-
-        for (const labname in labs) {
-            res.write(`<a href="/bomb/download/${labname}">${labname}</a><br>\r\n`);
+    app.get('/bomb', async (req, res, next) => {
+        try {
+            let token = req.cookies.user;
+            if (!token)
+                throw new Error("Unauthorized");
+            try {
+                jwt.verify(token, global.bomblabConfig.jwt_secret);
+            }
+            catch (error) {
+                res.clearCookie("user");
+                throw new Error("Invalid token");
+            }
+            let studentId = jwt.decode(token) as string;
+            let compileStatus = Object.fromEntries((await bomblabUserBombRespository
+                .find({ studentId: studentId }))
+                .map(status => [status.labname, { status: status.binaryCompileStatus.toString(), message: status.compilerInfo }]));
+            res.render("bomb", {
+                labs: Object.fromEntries(Object.keys(labs).map(name => [name, (name in compileStatus) ? compileStatus[name] : { status: 'none', message: "" }]))
+            });
+        } catch (error) {
+            res.send('message' in error ? error.message : JSON.stringify(error));
         }
-        res.end();
     })
 
     app.get('/bomb/download/:labname', async (req, res, next) => {
@@ -264,68 +351,18 @@ async function main() {
         }
     });
 
-    app.get('/bomb/stats', async (req, res, next) => {
+    app.get('/bomb/scoreboard', async (req, res, next) => {
         try {
-            let users = (await bomblabUserBombRespository.createQueryBuilder("user")
-                .select("studentId")
-                .distinct(true)
-                .execute() as { studentId: string }[]).map(x => x.studentId);
-            let userBoomCount = Object.fromEntries((await bomblabSubmissionRespository.createQueryBuilder("submission")
-                .select(["studentId", "labname", "stage", "COUNT(*) AS boomcount"])
-                .where("succeed = 0")
-                .groupBy("studentId, labname, stage").execute() as {
-                    studentId: string;
-                    labname: string;
-                    stage: number;
-                    boomcount: number;
-                }[]).map(result => [[result.studentId, result.labname, result.stage].toString(), result]));
-            let userPassedStage = Object.fromEntries((await bomblabSubmissionRespository.createQueryBuilder('submission')
-                .select(["studentId", "labname", "stage"])
-                .where("succeed = 1")
-                .groupBy("studentId, labname, stage").execute() as {
-                    studentId: string;
-                    labname: string;
-                    stage: number;
-                }[]).map(result => [[result.studentId, result.labname, result.stage].toString(), result]))
-            let userScore = Object.fromEntries((await bomblabSubmissionRespository.createQueryBuilder("submission").select(["studentId", "COUNT(DISTINCT stage) AS score"])
-                .where("succeed = 1")
-                .groupBy("studentId").execute() as {
-                    studentId: string;
-                    score: number;
-                }[]).map(result => [result.studentId, result]));
-            let result: {
-                studentId: string;
-                stages: { labname: string; stagename: string; booms: number; passed: boolean; }[];
-                score: number;
-            }[];
-            result = users.map(username => {
-                let ret = {
-                    studentId: username,
-                    stages: [],
-                    score: username in userScore ? userScore[username].score : 0
-                };
+            let result = await getBombStats();
+            res.render('scoreboard', result);
+        } catch (error) {
+            res.send('message' in error ? error.message : JSON.stringify(error));
+        }
+    })
 
-                for (const labname in labs) {
-                    const lab = labs[labname];
-                    for (const id in lab.stageInfo) {
-                        let { name, hidden } = lab.stageInfo[id];
-                        let tmp = {
-                            labname: labname,
-                            stagename: name,
-                            booms: 0,
-                            passed: false
-                        }
-                        if ([username, labname, id].toString() in userBoomCount)
-                            tmp.booms = userBoomCount[[username, labname, id].toString()].boomcount;
-
-                        if ([username, labname, id].toString() in userPassedStage)
-                            tmp.passed = true;
-                        ret.stages.push(tmp);
-                    }
-                }
-
-                return ret;
-            })
+    app.get('/bomb/json', async (req, res, next) => {
+        try {
+            let result = await getBombStats();
             res.type('json');
             res.send(JSON.stringify(result, null, 2));
         } catch (error) {
