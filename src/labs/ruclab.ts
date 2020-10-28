@@ -20,13 +20,13 @@ interface BombLabSubmission extends BombSubmission {
 
 export default class BombLab extends BombLabBase {
     stageInfo = {
-        "1": {name: "1", hidden: false},
-        "2": {name: "2", hidden: false},
-        "3": {name: "3", hidden: false},
-        "4": {name: "4", hidden: false},
-        "5": {name: "5", hidden: false},
-        "6": {name: "6", hidden: false},
-        "7": {name: "hidden", hidden: true}
+        "1": {name: "phase_1", hidden: false},
+        "2": {name: "phase_2", hidden: false},
+        "3": {name: "phase_3", hidden: false},
+        "4": {name: "phase_4", hidden: false},
+        "5": {name: "phase_5", hidden: false},
+        "6": {name: "phase_6", hidden: false},
+        "7": {name: "secret_phase", hidden: true}
     };
     weight = 1;
     #config: BombLabConfig;
