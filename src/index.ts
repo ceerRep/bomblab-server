@@ -16,6 +16,8 @@ import { URLSearchParams } from "url";
 import path from "path";
 import { BombLabBase, BombSubmission, ParsedBombSubmission, BombJudgeResult } from "./lab";
 
+import bodyParser from "body-parser";
+
 const promiseGet = promisify(request.get);
 const promisePost = promisify(request.post);
 
@@ -23,15 +25,20 @@ global.bomblabConfig = JSON.parse(readFileSync('./configs/global.json').toString
 
 async function main() {
     let labs: { [name: string]: BombLabBase } = {};
+    let labList: string[] = [];
 
     {
+        let lab_: [number, string][] = [];
         const labnames = await fsPromises.readdir(__dirname + '/labs');
         for (let labname of labnames.filter(name => path.extname(name) === '.js')) {
             labname = path.basename(labname, '.js');
             let lab = require(`./labs/${labname}`).default as { new(config: any): BombLabBase };
             let labconfig = JSON.parse((await fsPromises.readFile(`./configs/${labname}.json`)).toString());
             labs[labname] = new lab(labconfig);
+            lab_.push([labs[labname].weight, labname]);
         }
+        lab_.sort((a, b) => a[0] - b[0]);
+        labList = lab_.map(a => a[1]);
     }
 
     const [bomblab, syzoj] = await createConnections([{
@@ -96,7 +103,7 @@ async function main() {
             }[]
         } = { stages: undefined, students: undefined };
         let stages: { labname: string; id: string; stagename: string; }[] = [];
-        for (const labname in labs) {
+        for (const labname of labList) {
             const lab = labs[labname];
             for (const id in lab.stageInfo) {
                 stages.push({ labname: labname, id: id, stagename: lab.stageInfo[id].name });
@@ -133,8 +140,30 @@ async function main() {
 
     const app = express()
     app.use(cookieParser());
+    app.use(bodyParser.text({ type: 'text/bomb' }))
     app.set('view engine', 'ejs');
     app.set('views', './src/views')
+
+    app.get('/bomb/check', async (req, res) => {
+        try {
+            let query = req.query as {
+                userid: string;
+                userpwd: string;
+                lab: string;
+            };
+
+            if (query.lab in labs){
+                let lab = labs[query.lab];
+                if (query.userpwd == await lab.getPassword(query.userid))
+                    return res.status(200).send("OK");
+            }
+            
+            res.status(401).send("Fail");
+        } catch(error) {
+            console.log(error);
+            res.status(401).send("Fail");
+        }
+    })
 
     app.get('/bomb/login', (req, res) => {
         res.redirect('https://v.ruc.edu.cn/oauth2/authorize?' + (new URLSearchParams({
@@ -184,69 +213,71 @@ async function main() {
         }
     });
 
+    let processSubmit = async (bombSubmission: BombSubmission & { lab: string }) => {
+        let lab = labs[bombSubmission.lab];
+
+        if (!lab) {
+            console.log("Invalid lab: ", JSON.stringify(bombSubmission));
+            throw new Error("Invalid lab name");
+        }
+
+        let { parsedSubmission, validateSubmission } = await lab.parseBombSubmissionAndValidate(bombSubmission);
+
+        let submission = new Submission();
+        submission.studentId = parsedSubmission.userid;
+        submission.submitTime = new Date();
+        submission.succeed = parsedSubmission.submittedResult === "accept";
+        submission.stage = parsedSubmission.stage;
+        submission.info = "";
+        submission.input = parsedSubmission.userInput;
+        submission.labname = bombSubmission.lab;
+        submission.rawSubmission = JSON.stringify(bombSubmission);
+
+        let judge = submission.succeed && !(await bomblabSubmissionRespository.findOne({
+            studentId: parsedSubmission.userid,
+            labname: bombSubmission.lab,
+            stage: parsedSubmission.stage,
+            succeed: true
+        }));
+
+        await bomblabSubmissionRespository.save(submission);
+
+        if (judge) {
+
+            let result = await validateSubmission();
+
+            if (result.result === "error") {
+                submission.succeed = false;
+            }
+
+            submission.info = result.info;
+        }
+        else {
+            submission.info = "Skipped";
+        }
+        await bomblabSubmissionRespository.save(submission);
+    }
+
     app.get('/bomb/submit', async (req, res) => {
         try {
             let bombSubmission = req.query as unknown as BombSubmission & { lab: string };
 
-            let lab = labs[bombSubmission.lab];
-
-            if (!lab)
-                throw new Error("Invalid lab name");
-
-            let { parsedSubmission, validateSubmission } = await lab.parseBombSubmissionAndValidate(bombSubmission);
-
-            let submission = new Submission();
-            submission.studentId = parsedSubmission.userid;
-            submission.submitTime = new Date();
-            submission.succeed = parsedSubmission.submittedResult === "accept";
-            submission.stage = parsedSubmission.stage;
-            submission.info = "";
-            submission.input = parsedSubmission.userInput;
-            submission.labname = bombSubmission.lab;
-            submission.rawSubmission = JSON.stringify(bombSubmission);
-
             // Make bomb happy
-            res.send("OK");
+            res.send('OK');
 
-            let judge = submission.succeed && !(await bomblabSubmissionRespository.findOne({
-                studentId: parsedSubmission.userid,
-                labname: bombSubmission.lab,
-                stage: parsedSubmission.stage,
-                succeed: true
-            }));
+            await processSubmit(bombSubmission);
+        }
+        catch (error) {
+            res.send(error);
+        }
+    });
 
-            await bomblabSubmissionRespository.save(submission);
+    app.post('/bomb/submit', async (req, res) => {
+        try {
+            let bombSubmission = req.query as unknown as BombSubmission & { lab: string };
+            bombSubmission.result = req.body;
 
-            if (judge) {
-                // Validate
-
-                let result = await validateSubmission();
-
-                // let searchResult = (await bomblab.query("select stage, input from submission inner join (select studentId, MAX(submitTime) as time from submission where studentId = ? and labname == ? and succeed = ? group by stage) subquery on submission.studentId = subquery.studentId and submission.submitTime = subquery.time;", [params.userid, params.lab, true])) as {
-                //     stage: number;
-                //     input: string;
-                // }[];
-
-                // let inputs = (await fsPromises.readFile(`${global.bomblabConfig.bomblab_path}/bombs/bomb${bomb_id}/solution.txt`)).toString().split('\n');
-
-                // for (const { stage, input } of searchResult) {
-                //     inputs[stage - 1] = input;
-                // }
-
-                // let input = inputs.join('\n');
-
-                // let bombResult = await runBomb(input, submission.studentId);
-
-                if (result.result === "error") {
-                    submission.succeed = false;
-                }
-
-                submission.info = result.info;
-            }
-            else {
-                submission.info = "Skipped";
-            }
-            await bomblabSubmissionRespository.save(submission);
+            await processSubmit(bombSubmission);
         }
         catch (error) {
             res.send(error);
@@ -257,20 +288,20 @@ async function main() {
         try {
             let token = req.cookies.user;
             if (!token)
-                throw new Error("Unauthorized");
+                return res.redirect("/bomb/login");
             try {
                 jwt.verify(token, global.bomblabConfig.jwt_secret);
             }
             catch (error) {
                 res.clearCookie("user");
-                throw new Error("Invalid token");
+                return res.redirect("/bomb/login");
             }
             let studentId = jwt.decode(token) as string;
             let compileStatus = Object.fromEntries((await bomblabUserBombRespository
                 .find({ studentId: studentId }))
                 .map(status => [status.labname, { status: status.binaryCompileStatus.toString(), message: status.compilerInfo }]));
             res.render("bomb", {
-                labs: Object.fromEntries(Object.keys(labs).map(name => [name, (name in compileStatus) ? compileStatus[name] : { status: 'none', message: "" }]))
+                labs: labList.map(name => [name, (name in compileStatus) ? compileStatus[name] : { status: 'none', message: "" }])
             });
         } catch (error) {
             res.send('message' in error ? error.message : JSON.stringify(error));

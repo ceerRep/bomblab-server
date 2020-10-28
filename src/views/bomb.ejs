@@ -34,8 +34,7 @@
                     </tr>
                 </thead>
                 <tbody>
-                    <% for (let labname in labs) { 
-                        let lab = labs[labname]; %>
+                    <% for (let [labname, lab] of labs) { %>
                     <tr>
                         <td class="collapsing">
                             <i class="bomb icon"></i>

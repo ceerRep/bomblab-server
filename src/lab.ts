@@ -1,5 +1,6 @@
 export interface BombSubmission {
     userid: string;
+    result: string;
 }
 
 export interface ParsedBombSubmission {
@@ -16,9 +17,11 @@ export interface BombJudgeResult {
 
 export abstract class BombLabBase {
     readonly stageInfo: { [id: string]: { name: string; hidden: boolean; } };
+    readonly weight: number;
 
     constructor(config: any) { }
 
+    abstract getPassword(studentId: string): Promise<string>;
     abstract getBomb(studentId: string): Promise<string>;
     abstract parseBombSubmissionAndValidate(submission: BombSubmission): Promise<{
         parsedSubmission: ParsedBombSubmission;

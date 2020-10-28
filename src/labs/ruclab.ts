@@ -15,7 +15,6 @@ interface BombLabConfig {
 
 interface BombLabSubmission extends BombSubmission {
     userpwd: string;
-    result: string;
     submit: string;
 }
 
@@ -29,11 +28,16 @@ export default class BombLab extends BombLabBase {
         "6": {name: "6", hidden: false},
         "7": {name: "hidden", hidden: true}
     };
+    weight = 1;
     #config: BombLabConfig;
 
     constructor(config: any) {
         super(config);
         this.#config = config as BombLabConfig;
+    }
+
+    getPassword = (studentId: string): Promise<string> => {
+        return Promise.resolve("");
     }
 
     getBomb = async (studentId: string): Promise<string> => {
