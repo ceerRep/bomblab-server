@@ -1,0 +1,5 @@
+{
+    "nuclear_path": "./bomblab/nuclear/",
+    "nuclear_mount_path": "/opt/bomblab/",
+    "nuclear_password_salt": "NUCLEAR_SECRET"
+}

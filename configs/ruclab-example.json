@@ -1,0 +1,4 @@
+{
+    "bomblab_path": "./bomblab/",
+    "bomblab_mount_path": "/opt/bomblab/"
+}
