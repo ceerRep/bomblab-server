@@ -251,10 +251,12 @@ async function main() {
             }
 
             submission.info = result.info;
+            if (result["stage"] != null) submission.stage = result["stage"];
         }
         else {
             submission.info = "Skipped";
         }
+        console.log(submission);
         await bomblabSubmissionRespository.save(submission);
     }
 
@@ -265,7 +267,7 @@ async function main() {
             // Make bomb happy
             res.send('OK');
 
-            await processSubmit(bombSubmission);
+            processSubmit(bombSubmission);
         }
         catch (error) {
             res.send(error);
@@ -277,7 +279,9 @@ async function main() {
             let bombSubmission = req.query as unknown as BombSubmission & { lab: string };
             bombSubmission.result = req.body;
 
-            await processSubmit(bombSubmission);
+            res.send('OK')
+
+            processSubmit(bombSubmission);
         }
         catch (error) {
             res.send(error);

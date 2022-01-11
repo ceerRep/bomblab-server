@@ -104,13 +104,17 @@ export default class NuclearLab extends BombLabBase {
 
             let real_stage = ` ${stderr} `.split('accept').length - 1;
 
-            return {
-                result: real_stage == parseInt(submission.stage) ? 'accept' : 'error',
+            let ret = {
+                result: real_stage !== 0 && real_stage == parseInt(submission.stage) ? 'accept' : 'error',
                 info: JSON.stringify({
                     stdout: (await fsPromises.readFile(`./sandbox-output/${submission.userid}.stdout`).catch(() => "")).toString(),
                     stderr: (await fsPromises.readFile(`./sandbox-output/${submission.userid}.stderr`).catch(() => "")).toString()
-                })
+                }),
+                stage: null
             };
+            if (ret.result === 'error') ret.stage = real_stage + 1;
+            
+            return ret as BombJudgeResult;
         } catch (error) {
             return { result: 'error', info: 'message' in error ? error.message : JSON.stringify(error) };
         }
