@@ -1,4 +1,4 @@
-import { SandboxParameter, SandboxResult, startSandbox } from "simple-sandbox";
+import { SandboxParameter, SandboxResult, startSandbox, getUidAndGidInSandbox } from "simple-sandbox";
 
 interface SandboxJob {
     sandboxParam: SandboxParameter;
@@ -53,7 +53,7 @@ const sandboxQueue = new class {
                 sandboxParam: {
                     ...param,
                     chroot: global.bomblabConfig.sandbox_root_path,
-                    user: "nobody",
+                    user: getUidAndGidInSandbox(global.bomblabConfig.sandbox_root_path, "nobody"),
                     cgroup: "bomblab",
                     mountProc: true,
                     hostname: "bomblab"
